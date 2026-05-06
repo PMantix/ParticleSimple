@@ -1,0 +1,27 @@
+[package]
+name = "particle_simple"
+version = "0.1.0"
+edition = "2021"
+description = "Qualitative 2D particle simulator for electrochemical impulse-response signatures"
+
+[lib]
+name = "particle_simple"
+path = "src/lib.rs"
+
+[[bin]]
+name = "psimple"
+path = "src/main.rs"
+
+[dependencies]
+rand = "0.9"
+rand_distr = "0.5"
+rayon = "1"
+glam = "0.30"
+csv = "1"
+
+[dev-dependencies]
+approx = "0.5"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
