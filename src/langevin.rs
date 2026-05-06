@@ -1,10 +1,10 @@
 //! Overdamped Langevin integrator.
 //!
 //! Update rule for each mobile particle:
-//!   x_{n+1} = x_n + (q * D / kT) * E(x_n) * dt + sqrt(2 * D * dt) * xi
-//! where xi is a 2D unit-variance Gaussian. This is the right dynamical
-//! regime for ions in a viscous electrolyte and lets dt scale as dx^2 / D
-//! rather than at the inertial-MD timescale.
+//!   x_{n+1} = x_n + (q * D_eff / kT) * E(x_n) * dt + sqrt(2 * D_eff * dt) * xi
+//! where xi is a 2D unit-variance Gaussian and D_eff = D * mobility(cell).
+//! Reading mobility per cell lets SEI-blocked regions slow ions passing
+//! through them.
 
 use glam::Vec2;
 use rand_distr::{Distribution, Normal};
@@ -13,9 +13,6 @@ use crate::domain::Domain;
 use crate::grid::Grid;
 use crate::particle::Particle;
 
-/// Advance all mobile particles by one Langevin step. Particles are reflected
-/// at all four domain walls; surface reactions (deposition / SEI) are handled
-/// in a separate pass after this one.
 pub fn step(particles: &mut [Particle], grid: &Grid, domain: &Domain, kt: f32, dt: f32) {
     let normal = Normal::<f64>::new(0.0, 1.0).expect("valid normal");
     let mut rng = rand::rng();
@@ -29,11 +26,15 @@ pub fn step(particles: &mut [Particle], grid: &Grid, domain: &Domain, kt: f32, d
             continue;
         }
 
+        let (ix, iy) = grid.cell_of(p.pos);
+        let mobility = grid.mobility[grid.idx(ix, iy)].max(0.0);
+        let d_eff = props.d * mobility;
+
         let e = grid.field_at(p.pos);
-        let drift_coeff = props.charge * props.d * dt / kt;
+        let drift_coeff = props.charge * d_eff * dt / kt;
         let drift = e * drift_coeff;
 
-        let sigma = (two_dt * props.d).sqrt();
+        let sigma = (two_dt * d_eff).sqrt();
         let xi = Vec2::new(
             normal.sample(&mut rng) as f32,
             normal.sample(&mut rng) as f32,
@@ -42,7 +43,6 @@ pub fn step(particles: &mut [Particle], grid: &Grid, domain: &Domain, kt: f32, d
 
         let mut new_pos = p.pos + drift + diffuse;
 
-        // Reflect across walls (one bounce; clamp afterwards in case of overshoot).
         if new_pos.x < -hw {
             new_pos.x = -2.0 * hw - new_pos.x;
         } else if new_pos.x > hw {

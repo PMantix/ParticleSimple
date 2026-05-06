@@ -1,18 +1,18 @@
-//! Headline scenario: voltage step pulse with relaxation.
+//! Headline scenario: voltage step pulse train with relaxation, run long
+//! enough that morphology-driven and SEI-driven trends are visible over
+//! cycles.
 //!
-//! Apply a 0 -> +V -> 0 pulse train and record the current response.
-//! With BV deposition active, V > 0 drives stripping at the left and
-//! plating at the right; the transient I(t) signature exposes:
+//! Apply 0 -> +V -> 0 pulses. With BV deposition, V > 0 strips at left
+//! and plates at right; the V_bulk(t) signature shows R0 / R1 / R2
+//! separation in each pulse. Solvent reduces irreversibly to SEI on the
+//! reducing-side metal surface, blocking ion transport in those grid
+//! cells.
 //!
-//!   R0  - immediate ohmic conductance (large initial current spike)
-//!   R1  - charge-transfer relaxation as overpotential at the surface
-//!         catches up with the imposed V (current decays over tau1)
-//!   R2  - longer-time concentration polarization (current keeps drifting
-//!         down as the reaction zones deplete)
-//!
-//! The voltage step is the dual of the galvanostatic current step the
-//! real DCR data uses. Same R/tau information, more numerically stable
-//! in this toy because we don't fight a controller into saturation.
+//! Over many cycles we expect:
+//!   - per-cycle metal_count drifts upward at the right (deposit growth)
+//!   - sei_fraction grows monotonically as solvent gets consumed
+//!   - voltage_bulk during pulse drops further over cycles (R0/R2 rising
+//!     from SEI; R1 falling from roughened surface area)
 
 use glam::Vec2;
 use rand::Rng;
@@ -31,13 +31,12 @@ pub fn run() {
     let grid = Grid::new(&domain, 32, 16);
 
     let n_pairs = 1000;
-    // Seed several rows of Metal at each electrode so stripping has a
-    // sustained reservoir. Single-row seeding depletes within ~hundreds
-    // of pulse steps and stalls the response.
+    let n_solvent = 200;
     let n_metal_rows = 4;
     let n_metal_per_row = 16;
-    let mut particles =
-        Vec::with_capacity(2 * n_pairs + 2 * n_metal_rows * n_metal_per_row);
+    let mut particles = Vec::with_capacity(
+        2 * n_pairs + n_solvent + 2 * n_metal_rows * n_metal_per_row,
+    );
     let mut rng = rand::rng();
 
     for _ in 0..n_pairs {
@@ -52,6 +51,13 @@ pub fn run() {
         );
         particles.push(Particle::new(anion_pos, Species::Anion));
     }
+    for _ in 0..n_solvent {
+        let pos = Vec2::new(
+            rng.random_range(-domain.half_width..domain.half_width),
+            rng.random_range(-domain.half_height..domain.half_height),
+        );
+        particles.push(Particle::new(pos, Species::Solvent));
+    }
 
     let dy = (2.0 * domain.half_height) / n_metal_per_row as f32;
     for row in 0..n_metal_rows {
@@ -65,7 +71,7 @@ pub fn run() {
         }
     }
 
-    // 4 cycles of relax(500) + pulse(1000) = 6000 steps.
+    // 10 cycles of relax(500) + pulse(1000) = 15000 steps total.
     let protocol = ProtocolState::new(Protocol::StepVoltage {
         relax_steps: 500,
         pulse_steps: 1000,
@@ -79,7 +85,15 @@ pub fn run() {
         eq_potential: 0.0,
         reaction_dx_factor: 1.5,
     };
-    let bv_sei = BvParams::default();
+    // SEI: lower i0 (irreversible passivation is slow), eq_potential set
+    // such that only the reducing-side electrolyte forms it.
+    let bv_sei = BvParams {
+        i0: 0.05,
+        alpha: 0.5,
+        kt: 0.025,
+        eq_potential: 0.0,
+        reaction_dx_factor: 2.0,
+    };
 
     let params = CellParams {
         dt: 0.05,
@@ -95,19 +109,29 @@ pub fn run() {
 
     let path = "pulse_dcr.csv";
     let mut sink = CsvSink::new(path).expect("create CSV");
-    let n_steps = 6000;
+    let n_steps = 15000;
     for _ in 0..n_steps {
         let m = cell.step();
         sink.write(&m).expect("write CSV");
     }
+
+    let metal_total = cell
+        .particles
+        .iter()
+        .filter(|p| p.species == Species::Metal)
+        .count();
+    let sei_total = cell
+        .particles
+        .iter()
+        .filter(|p| p.species == Species::Sei)
+        .count();
+    let cation_total = cell
+        .particles
+        .iter()
+        .filter(|p| p.species == Species::Cation)
+        .count();
     println!(
-        "pulse_dcr: ran {} steps, {} particles total, {} metal at end, wrote {}",
-        n_steps,
-        cell.particles.len(),
-        cell.particles
-            .iter()
-            .filter(|p| p.species == Species::Metal)
-            .count(),
-        path
+        "pulse_dcr: ran {} steps. End: {} cations, {} metal, {} sei. wrote {}",
+        n_steps, cation_total, metal_total, sei_total, path
     );
 }
