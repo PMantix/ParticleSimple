@@ -1,12 +1,9 @@
 //! Stochastic surface reactions: deposition / stripping (Butler-Volmer) and
 //! solvent reduction to SEI.
 //!
-//! All reactions fire as per-particle Bernoulli events with rate r:
-//!   p_event = 1 - exp(-r * dt)
-//! and r is set by Butler-Volmer:
-//!   r = i0 * (exp(alpha * eta / kT) - exp(-(1 - alpha) * eta / kT))
-//! where eta is the local overpotential (potential at the particle's grid
-//! cell minus the equilibrium reduction potential of the species).
+//! Day 2 stub: both functions are no-ops. The Cell::step pipeline calls them
+//! every step so the plumbing exists, but the BV machinery is filled in next
+//! round once empty_cell shows clean ohmic behavior.
 
 use crate::cell::Cell;
 
@@ -23,14 +20,11 @@ pub struct BvParams {
 }
 
 /// Deposition / stripping at the metal anode: Cation <-> Metal.
-/// Cations within reaction range of an exposed metal site can plate; metal
-/// atoms at the surface can strip back to cations under reverse polarization.
 pub fn deposition(_cell: &mut Cell, _bv: BvParams, _dt: f32) {
-    todo!("BV-driven plate/strip at the anode surface")
+    // TODO(reactions): BV-driven plate/strip at the anode surface.
 }
 
-/// Solvent reduction at the metal anode: Solvent -> Sei.
-/// Same BV form, much smaller i0, irreversible (no backward branch).
+/// Solvent reduction at the metal anode: Solvent -> Sei (irreversible).
 pub fn sei_formation(_cell: &mut Cell, _bv: BvParams, _dt: f32) {
-    todo!("BV-driven irreversible solvent->SEI conversion at the anode")
+    // TODO(reactions): BV-driven irreversible solvent->SEI conversion.
 }

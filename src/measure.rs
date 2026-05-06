@@ -1,35 +1,63 @@
 //! Per-step diagnostics + CSV output.
 //!
-//! Records terminal voltage, applied current, exposed metal-electrolyte
-//! interface area, and SEI coverage. From a recorded `Measurement` stream we
-//! can fit an R0 / (R1, tau1) / (R2, tau2) ECM after a step.
+//! Records terminal voltage, current (rate of midplane charge flow), exposed
+//! metal-electrolyte interface area, and SEI coverage. From a recorded stream
+//! we can fit an R0 / (R1, tau1) / (R2, tau2) ECM after a step pulse.
 
 use std::fs::File;
 use std::path::Path;
 
 use crate::cell::Cell;
 use crate::protocol::Drive;
+use crate::species::Species;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Measurement {
     pub step: usize,
     /// Terminal V_left - V_right (sim potential units).
     pub voltage: f32,
-    /// Net current crossing the cell (sim charge / step).
+    /// Net current crossing the midplane (sim charge / step).
     pub current: f32,
-    /// Number of exposed Metal/Cation interface contacts (proxy for A_eff).
+    /// Number of immobile Metal particles (proxy for A_eff while we don't yet
+    /// distinguish surface from interior).
     pub exposed_metal_sites: usize,
-    /// Fraction of anode surface cells flagged as SEI-blocked.
+    /// Fraction of grid cells flagged as SEI-blocked.
     pub sei_fraction: f32,
 }
 
 impl Measurement {
-    pub fn sample(_cell: &Cell, _drive: Drive) -> Self {
-        todo!("read terminal voltage from grid, count surface contacts, compute SEI fraction")
+    pub fn sample(cell: &Cell, _drive: Drive) -> Self {
+        let half_w = cell.domain.half_width;
+        let probe = 0.05 * half_w;
+        let v_left = cell.grid.slab_potential(-half_w, -half_w + probe);
+        let v_right = cell.grid.slab_potential(half_w - probe, half_w);
+        let voltage = v_left - v_right;
+
+        let charge_left = cell.charge_in_left_half();
+        let dt = cell.params.dt;
+        let current = -(charge_left - cell.charge_left_prev) / dt;
+
+        let exposed_metal_sites = cell
+            .particles
+            .iter()
+            .filter(|p| p.species == Species::Metal)
+            .count();
+
+        let blocked = cell.grid.mobility.iter().filter(|&&m| m < 1.0).count() as f32;
+        let total = cell.grid.mobility.len() as f32;
+        let sei_fraction = if total > 0.0 { blocked / total } else { 0.0 };
+
+        Self {
+            step: cell.step_index,
+            voltage,
+            current,
+            exposed_metal_sites,
+            sei_fraction,
+        }
     }
 }
 
-/// Stream measurements to a CSV file. Closed automatically on drop.
+/// Stream measurements to a CSV file. Closes automatically on drop.
 pub struct CsvSink {
     writer: csv::Writer<File>,
 }
