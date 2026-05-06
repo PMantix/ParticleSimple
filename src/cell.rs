@@ -8,7 +8,7 @@ use crate::measure::Measurement;
 use crate::particle::Particle;
 use crate::poisson::{self, BoundaryPotentials};
 use crate::protocol::ProtocolState;
-use crate::reactions::{self, BvParams};
+use crate::reactions::{self, BvParams, ReactionCounts};
 
 #[derive(Clone, Debug)]
 pub struct CellParams {
@@ -28,14 +28,17 @@ pub struct Cell {
     pub protocol: ProtocolState,
     pub params: CellParams,
     pub step_index: usize,
-    /// Total left-half charge from the previous step; used to compute current
-    /// as the rate of net charge flow across the midplane (x = 0).
+    /// Total left-half charge from the previous step; used to compute the
+    /// midplane current as the rate of net charge flow across x = 0.
     pub charge_left_prev: f32,
-    /// Most recent measured midplane current, fed to galvanostatic controllers.
+    /// Most recent measured boundary current (= the cell's external current
+    /// at the left electrode). Fed back to galvanostatic controllers.
     pub last_current: f32,
-    /// Most recent boundary potentials applied; used by Measurement to report
-    /// the applied terminal voltage.
+    /// Most recent boundary potentials applied; used by Measurement to
+    /// report the applied terminal voltage.
     pub last_bcs: BoundaryPotentials,
+    /// Reaction events counted in the most recent step.
+    pub last_reaction_counts: ReactionCounts,
 }
 
 impl Cell {
@@ -64,16 +67,10 @@ impl Cell {
                 left: 0.0,
                 right: 0.0,
             },
+            last_reaction_counts: ReactionCounts::default(),
         }
     }
 
-    /// One simulation step:
-    ///   1. protocol picks BCs (using last step's measured current)
-    ///   2. clear / deposit rho
-    ///   3. solve Poisson
-    ///   4. Langevin step on mobile particles
-    ///   5. surface reactions (deposition + SEI)
-    ///   6. record measurement, feed current back to controller
     pub fn step(&mut self) -> Measurement {
         let dt = self.params.dt;
         let kt = self.params.kt;
@@ -110,20 +107,21 @@ impl Cell {
 
         langevin::step(&mut self.particles, &self.grid, &self.domain, kt, dt);
 
-        reactions::deposition(self, bv_dep, dt);
-        reactions::sei_formation(self, bv_sei, dt);
+        let mut counts = reactions::deposition(self, bv_dep, dt);
+        counts.sei_formed = reactions::sei_formation(self, bv_sei, dt);
+        self.last_reaction_counts = counts;
 
         let m = Measurement::sample(self);
-        // Roll the previous-charge baseline forward so next step's current
-        // is the per-step rate, not cumulative.
+        // Roll forward the previous-charge baseline so next step's midplane
+        // current is per-step, not cumulative.
         self.charge_left_prev = self.charge_in_left_half();
+        // Boundary current feeds back to the PI controller.
         self.last_current = m.current;
         self.step_index += 1;
         m
     }
 
-    /// Net charge in the left half of the domain (x < 0). Used with
-    /// `charge_left_prev` to derive a midplane current.
+    /// Net charge in the left half of the domain (x < 0).
     pub fn charge_in_left_half(&self) -> f32 {
         self.particles
             .iter()

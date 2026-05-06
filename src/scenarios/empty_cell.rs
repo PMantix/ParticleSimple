@@ -45,12 +45,7 @@ pub fn run() {
 
     let protocol = ProtocolState::new(Protocol::Potentiostatic { voltage: 0.1 });
 
-    let bv_zero = BvParams {
-        i0: 0.0,
-        alpha: 0.5,
-        kt: 0.025,
-        eq_potential: 0.0,
-    };
+    let bv_zero = BvParams::default();
     let params = CellParams {
         dt: 0.05,
         kt: 0.025,

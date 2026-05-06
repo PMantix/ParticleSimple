@@ -48,8 +48,18 @@ impl CurrentController {
             (1.0 - alpha) * self.filtered_current + alpha * measured_current;
 
         let err = self.target - self.filtered_current;
-        self.integral =
-            (self.integral + self.ki * err * dt).clamp(-self.voltage_max, self.voltage_max);
+        // Conditional anti-windup: don't integrate if we're saturated and
+        // integrating in the same direction would push us further into
+        // saturation. Allows the integrator to unwind once the error sign
+        // flips after a pulse ends.
+        let candidate_integral = self.integral + self.ki * err * dt;
+        let candidate_voltage = self.kp * err + candidate_integral;
+        let saturated = candidate_voltage.abs() >= self.voltage_max;
+        let same_sign = candidate_voltage * err > 0.0;
+        if !(saturated && same_sign) {
+            self.integral =
+                candidate_integral.clamp(-self.voltage_max, self.voltage_max);
+        }
         self.voltage =
             (self.kp * err + self.integral).clamp(-self.voltage_max, self.voltage_max);
         self.voltage

@@ -98,6 +98,38 @@ impl Grid {
         Vec2::new(ex, ey)
     }
 
+    /// Locate the grid cell containing a point.
+    pub fn cell_of(&self, p: Vec2) -> (usize, usize) {
+        let nx_f = (self.nx - 1) as f32;
+        let ny_f = (self.ny - 1) as f32;
+        let gx = ((p.x - self.origin.x) / self.dx).clamp(0.0, nx_f);
+        let gy = ((p.y - self.origin.y) / self.dy).clamp(0.0, ny_f);
+        let ix = (gx as usize).min(self.nx - 1);
+        let iy = (gy as usize).min(self.ny - 1);
+        (ix, iy)
+    }
+
+    /// Sample phi at a point via bilinear interpolation. Used by reactions
+    /// to read local Galvani potential at a particle's position.
+    pub fn sample_phi(&self, p: Vec2) -> f32 {
+        let nx_f = (self.nx - 1) as f32;
+        let ny_f = (self.ny - 1) as f32;
+        let gx = ((p.x - self.origin.x) / self.dx).clamp(0.0, nx_f);
+        let gy = ((p.y - self.origin.y) / self.dy).clamp(0.0, ny_f);
+        let ix = (gx as usize).min(self.nx - 2);
+        let iy = (gy as usize).min(self.ny - 2);
+        let wx = gx - ix as f32;
+        let wy = gy - iy as f32;
+        let p00 = self.phi[self.idx(ix, iy)];
+        let p10 = self.phi[self.idx(ix + 1, iy)];
+        let p01 = self.phi[self.idx(ix, iy + 1)];
+        let p11 = self.phi[self.idx(ix + 1, iy + 1)];
+        (1.0 - wx) * (1.0 - wy) * p00
+            + wx * (1.0 - wy) * p10
+            + (1.0 - wx) * wy * p01
+            + wx * wy * p11
+    }
+
     /// Average phi over cells whose centers fall in [x_min, x_max].
     /// Used for terminal-voltage measurement next to electrode boundaries.
     pub fn slab_potential(&self, x_min: f32, x_max: f32) -> f32 {
