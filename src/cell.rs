@@ -7,7 +7,7 @@ use crate::langevin;
 use crate::measure::Measurement;
 use crate::particle::Particle;
 use crate::poisson::{self, BoundaryPotentials};
-use crate::protocol::{Drive, ProtocolState};
+use crate::protocol::ProtocolState;
 use crate::reactions::{self, BvParams};
 
 #[derive(Clone, Debug)]
@@ -28,9 +28,14 @@ pub struct Cell {
     pub protocol: ProtocolState,
     pub params: CellParams,
     pub step_index: usize,
-    /// Total left-half charge from previous step; used to compute current as
-    /// the rate of net charge flow across the midplane (x = 0).
+    /// Total left-half charge from the previous step; used to compute current
+    /// as the rate of net charge flow across the midplane (x = 0).
     pub charge_left_prev: f32,
+    /// Most recent measured midplane current, fed to galvanostatic controllers.
+    pub last_current: f32,
+    /// Most recent boundary potentials applied; used by Measurement to report
+    /// the applied terminal voltage.
+    pub last_bcs: BoundaryPotentials,
 }
 
 impl Cell {
@@ -54,26 +59,31 @@ impl Cell {
             params,
             step_index: 0,
             charge_left_prev,
+            last_current: 0.0,
+            last_bcs: BoundaryPotentials {
+                left: 0.0,
+                right: 0.0,
+            },
         }
     }
 
     /// One simulation step:
-    ///   1. clear / deposit rho
-    ///   2. set BCs from current protocol drive
+    ///   1. protocol picks BCs (using last step's measured current)
+    ///   2. clear / deposit rho
     ///   3. solve Poisson
     ///   4. Langevin step on mobile particles
     ///   5. surface reactions (deposition + SEI)
-    ///   6. record measurement
+    ///   6. record measurement, feed current back to controller
     pub fn step(&mut self) -> Measurement {
-        let drive = self.protocol.tick();
-        let bv_dep = self.params.bv_deposition;
-        let bv_sei = self.params.bv_sei;
         let dt = self.params.dt;
         let kt = self.params.kt;
+        let bv_dep = self.params.bv_deposition;
+        let bv_sei = self.params.bv_sei;
+
+        let bcs = self.protocol.tick(dt, self.last_current);
+        self.last_bcs = bcs;
 
         self.grid.clear_rho();
-        // Collect (pos, charge) pairs into a temporary; deposit_charges
-        // borrows grid mutably.
         {
             let charges: Vec<_> = self
                 .particles
@@ -90,7 +100,6 @@ impl Cell {
             self.grid.deposit_charges(charges);
         }
 
-        let bcs = boundary_potentials_from_drive(drive);
         poisson::solve(
             &mut self.grid,
             bcs,
@@ -104,7 +113,11 @@ impl Cell {
         reactions::deposition(self, bv_dep, dt);
         reactions::sei_formation(self, bv_sei, dt);
 
-        let m = Measurement::sample(self, drive);
+        let m = Measurement::sample(self);
+        // Roll the previous-charge baseline forward so next step's current
+        // is the per-step rate, not cumulative.
+        self.charge_left_prev = self.charge_in_left_half();
+        self.last_current = m.current;
         self.step_index += 1;
         m
     }
@@ -117,21 +130,5 @@ impl Cell {
             .filter(|p| p.pos.x < 0.0)
             .map(|p| p.charge())
             .sum()
-    }
-}
-
-/// Map a Drive (potentiostatic V, or galvanostatic I) into electrode BCs.
-/// Day 2 supports potentiostatic only; Drive::Current produces open-circuit
-/// (zero) BCs and the caller is expected not to use it yet.
-fn boundary_potentials_from_drive(drive: Drive) -> BoundaryPotentials {
-    match drive {
-        Drive::Voltage(v) => BoundaryPotentials {
-            left: 0.5 * v,
-            right: -0.5 * v,
-        },
-        Drive::Current(_) => BoundaryPotentials {
-            left: 0.0,
-            right: 0.0,
-        },
     }
 }

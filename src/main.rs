@@ -13,10 +13,11 @@ fn main() {
 
     match scenario {
         "empty_cell" => scenarios::empty_cell::run(),
+        "galvanostatic_check" => scenarios::galvanostatic_check::run(),
         "pulse_dcr" => scenarios::pulse_dcr::run(),
         other => {
             eprintln!("unknown scenario: {other}");
-            eprintln!("available: empty_cell, pulse_dcr");
+            eprintln!("available: empty_cell, galvanostatic_check, pulse_dcr");
             std::process::exit(1);
         }
     }

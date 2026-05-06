@@ -1,15 +1,8 @@
-//! Bare electrolyte between two electrodes, small applied voltage.
+//! PI controller sanity check.
 //!
-//! Tuned so the EDL formation transient is visible inside ~5k steps:
-//!   - Domain L = 20, dx = 0.625 (32 cells across)
-//!   - D = 1, dt = 0.05  =>  sigma_diff = 0.32 < dx/2 (stable)
-//!   - n_pairs = 500 (n = 5/area, lambda_D ~ 0.5 with epsilon = 100)
-//!   - Conductivity sigma ~ 2*n*q^2*D/kT = 400  =>  R0 ~ L/(sigma*A) ~ 0.005
-//!   - C_dl ~ epsilon/lambda_D ~ 200/area  =>  C_total ~ 1000
-//!   - tau_RC ~ R0 * C_total ~ 5 sim time = 100 steps
-//!
-//! With no surface reactions, V is held constant and the current decays
-//! after the EDL has charged.
+//! Hold a constant target current. The controller adjusts applied voltage
+//! each step to drive measured current toward the target. After settling,
+//! `current` ~ target and `voltage_applied` ~ target * R_ohmic.
 
 use glam::Vec2;
 use rand::Rng;
@@ -19,7 +12,7 @@ use crate::domain::Domain;
 use crate::grid::Grid;
 use crate::measure::CsvSink;
 use crate::particle::Particle;
-use crate::protocol::{Protocol, ProtocolState};
+use crate::protocol::{CurrentController, Protocol, ProtocolState};
 use crate::reactions::BvParams;
 use crate::species::Species;
 
@@ -43,7 +36,21 @@ pub fn run() {
         particles.push(Particle::new(anion_pos, Species::Anion));
     }
 
-    let protocol = ProtocolState::new(Protocol::Potentiostatic { voltage: 0.1 });
+    // NULL SANITY TEST. With no surface reactions, the cell has no DC
+    // path -- any applied V just charges the EDL until current stops, so
+    // a non-zero target is physically impossible and the controller will
+    // saturate trying. Set target=0 instead; we verify only that the PI
+    // is wired correctly (voltage stays near 0, current fluctuates around
+    // 0 from thermal noise). The real galvanostatic test happens once
+    // deposition reactions exist next round.
+    let controller = CurrentController::new(
+        /* target */ 0.0,
+        /* kp */ 0.0005,
+        /* ki */ 0.05,
+        /* filter_alpha */ 0.05,
+        /* voltage_max */ 0.5,
+    );
+    let protocol = ProtocolState::new(Protocol::Galvanostatic { controller });
 
     let bv_zero = BvParams {
         i0: 0.0,
@@ -63,7 +70,7 @@ pub fn run() {
 
     let mut cell = Cell::new(domain, grid, particles, protocol, params);
 
-    let path = "empty_cell.csv";
+    let path = "galvanostatic_check.csv";
     let mut sink = CsvSink::new(path).expect("create CSV");
     let n_steps = 5000;
     for _ in 0..n_steps {
@@ -71,9 +78,7 @@ pub fn run() {
         sink.write(&m).expect("write CSV");
     }
     println!(
-        "empty_cell: ran {} steps, {} particles, wrote {}",
-        n_steps,
-        cell.particles.len(),
-        path
+        "galvanostatic_check: ran {} steps, target current 0.0, wrote {}",
+        n_steps, path
     );
 }
