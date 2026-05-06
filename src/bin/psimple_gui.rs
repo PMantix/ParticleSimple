@@ -139,7 +139,14 @@ fn legend_chip(x: f32, y: f32, label: &str, style: ParticleStyle) {
 async fn main() {
     let mut cell = scenarios::pulse_dcr::setup();
     let mut paused = false;
-    let mut steps_per_frame: u32 = 4;
+    // Effective sim-steps per render frame. Below 1.0 means "one step every
+    // N frames" (slow motion); above 1.0 means many steps per frame (fast).
+    // The accumulator below carries the fractional debt across frames.
+    let speeds: [f32; 11] = [
+        0.0625, 0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0,
+    ];
+    let mut speed_idx: usize = 3; // 0.5 = one step every two frames
+    let mut step_accumulator: f32 = 0.0;
     let mut last: Option<Measurement> = None;
 
     let cycle = scenarios::pulse_dcr::RELAX_STEPS + scenarios::pulse_dcr::PULSE_STEPS;
@@ -162,12 +169,13 @@ async fn main() {
         if is_key_pressed(KeyCode::R) {
             cell = scenarios::pulse_dcr::setup();
             last = None;
+            step_accumulator = 0.0;
         }
         if is_key_pressed(KeyCode::Equal) || is_key_pressed(KeyCode::KpAdd) {
-            steps_per_frame = (steps_per_frame * 2).min(64);
+            speed_idx = (speed_idx + 1).min(speeds.len() - 1);
         }
         if is_key_pressed(KeyCode::Minus) || is_key_pressed(KeyCode::KpSubtract) {
-            steps_per_frame = (steps_per_frame / 2).max(1);
+            speed_idx = speed_idx.saturating_sub(1);
         }
         if is_key_pressed(KeyCode::Q) || is_key_pressed(KeyCode::Escape) {
             break;
@@ -175,8 +183,10 @@ async fn main() {
 
         // ---- step ----
         if !paused {
-            for _ in 0..steps_per_frame {
+            step_accumulator += speeds[speed_idx];
+            while step_accumulator >= 1.0 {
                 last = Some(cell.step());
+                step_accumulator -= 1.0;
             }
         }
 
@@ -301,8 +311,14 @@ async fn main() {
         draw_text(&info, 20.0, 64.0, 18.0, Color::new(0.92, 0.92, 0.93, 1.0));
 
         let pause_str = if paused { "PAUSED" } else { "running" };
+        let speed = speeds[speed_idx];
+        let speed_str = if speed >= 1.0 {
+            format!("{:.0} step/frame", speed)
+        } else {
+            format!("1 step / {:.0} frames", 1.0 / speed)
+        };
         draw_text(
-            &format!("{}    {} step(s) / frame", pause_str, steps_per_frame),
+            &format!("{}    {}", pause_str, speed_str),
             20.0,
             86.0,
             16.0,
