@@ -21,7 +21,7 @@ thermostat, replacing them with:
 The model is not a quantitative cell simulator. It is a qualitative generator
 of morphology and a probe of the resulting impulse response.
 
-## Goals (in order)
+## Goals
 
 1. Reproduce the three-timescale shape of the DCR pulse
    (R0 ohmic + R1 charge-transfer + R2 diffusion).
@@ -30,14 +30,48 @@ of morphology and a probe of the resulting impulse response.
 
 ## Run
 
+### Headless (CSV out, fast)
+
 ```
 cargo run --release --bin psimple -- --scenario pulse_dcr
+cargo run --release --bin psimple -- --scenario empty_cell
+cargo run --release --bin psimple -- --scenario galvanostatic_check
 ```
 
-Scenarios live under `src/scenarios/` and dump CSV for external plotting.
+Each scenario writes a CSV in the current working directory. Plot with:
 
-## Status
+```
+python3 scripts/plot_pulse_dcr.py
+```
 
-Day 1 sketch: types and module boundaries are in place; physics bodies are
-`todo!()` placeholders. See the audit notes in the parent ParticleSim repo
-for design rationale.
+### Live GUI (macroquad, watch the run unfold)
+
+```
+cargo run --release --bin psimple_gui --features gui
+```
+
+Window opens with the cell viewport, particle species color-coded
+(cation / anion / solvent / metal / SEI), and live readouts for the
+applied voltage, bulk voltage, boundary current, metal count, and SEI
+fraction. Controls:
+
+| key | action |
+| --- | --- |
+| `space` | pause / resume |
+| `r` | reset to step 0 |
+| `+` / `-` | steps per render frame (1..64) |
+| `q` / `esc` | quit |
+
+## Layout
+
+```
+src/
+  particle.rs   species.rs   domain.rs       data types
+  grid.rs       poisson.rs   langevin.rs     physics core
+  reactions.rs  protocol.rs  cell.rs         orchestration
+  measure.rs                                 CSV out
+  scenarios/    *.rs                         named experiments
+  bin/psimple_gui.rs                         macroquad live window
+scripts/
+  plot_pulse_dcr.py                          matplotlib plots from CSV
+```

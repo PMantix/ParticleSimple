@@ -12,12 +12,22 @@ path = "src/lib.rs"
 name = "psimple"
 path = "src/main.rs"
 
+[[bin]]
+name = "psimple_gui"
+path = "src/bin/psimple_gui.rs"
+required-features = ["gui"]
+
+[features]
+default = []
+gui = ["dep:macroquad"]
+
 [dependencies]
 rand = "0.9"
 rand_distr = "0.5"
 rayon = "1"
 glam = "0.30"
 csv = "1"
+macroquad = { version = "0.4", optional = true }
 
 [dev-dependencies]
 approx = "0.5"

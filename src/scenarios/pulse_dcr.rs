@@ -7,12 +7,6 @@
 //! separation in each pulse. Solvent reduces irreversibly to SEI on the
 //! reducing-side metal surface, blocking ion transport in those grid
 //! cells.
-//!
-//! Over many cycles we expect:
-//!   - per-cycle metal_count drifts upward at the right (deposit growth)
-//!   - sei_fraction grows monotonically as solvent gets consumed
-//!   - voltage_bulk during pulse drops further over cycles (R0/R2 rising
-//!     from SEI; R1 falling from roughened surface area)
 
 use glam::Vec2;
 use rand::Rng;
@@ -26,7 +20,13 @@ use crate::protocol::{Protocol, ProtocolState};
 use crate::reactions::BvParams;
 use crate::species::Species;
 
-pub fn run() {
+pub const RELAX_STEPS: usize = 500;
+pub const PULSE_STEPS: usize = 1000;
+pub const PULSE_VOLTAGE: f32 = 0.1;
+
+/// Construct a freshly-initialized Cell wired up for the pulse_dcr
+/// experiment. Used by both the headless `run()` driver and the GUI bin.
+pub fn setup() -> Cell {
     let domain = Domain::new(10.0, 5.0);
     let grid = Grid::new(&domain, 32, 16);
 
@@ -34,9 +34,8 @@ pub fn run() {
     let n_solvent = 200;
     let n_metal_rows = 4;
     let n_metal_per_row = 16;
-    let mut particles = Vec::with_capacity(
-        2 * n_pairs + n_solvent + 2 * n_metal_rows * n_metal_per_row,
-    );
+    let mut particles =
+        Vec::with_capacity(2 * n_pairs + n_solvent + 2 * n_metal_rows * n_metal_per_row);
     let mut rng = rand::rng();
 
     for _ in 0..n_pairs {
@@ -71,11 +70,10 @@ pub fn run() {
         }
     }
 
-    // 10 cycles of relax(500) + pulse(1000) = 15000 steps total.
     let protocol = ProtocolState::new(Protocol::StepVoltage {
-        relax_steps: 500,
-        pulse_steps: 1000,
-        pulse_voltage: 0.1,
+        relax_steps: RELAX_STEPS,
+        pulse_steps: PULSE_STEPS,
+        pulse_voltage: PULSE_VOLTAGE,
     });
 
     let bv_deposition = BvParams {
@@ -85,8 +83,6 @@ pub fn run() {
         eq_potential: 0.0,
         reaction_dx_factor: 1.5,
     };
-    // SEI: lower i0 (irreversible passivation is slow), eq_potential set
-    // such that only the reducing-side electrolyte forms it.
     let bv_sei = BvParams {
         i0: 0.05,
         alpha: 0.5,
@@ -105,8 +101,11 @@ pub fn run() {
         bv_sei,
     };
 
-    let mut cell = Cell::new(domain, grid, particles, protocol, params);
+    Cell::new(domain, grid, particles, protocol, params)
+}
 
+pub fn run() {
+    let mut cell = setup();
     let path = "pulse_dcr.csv";
     let mut sink = CsvSink::new(path).expect("create CSV");
     let n_steps = 15000;
